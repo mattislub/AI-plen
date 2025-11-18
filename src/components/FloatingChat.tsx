@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
-import { MessageCircle, X, Send } from 'lucide-react';
+import { MessageCircle, X, Send, AlertTriangle } from 'lucide-react';
+import { getAIConfig } from '../lib/aiConfig';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -11,6 +12,8 @@ export default function FloatingChat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [{ config, error }] = useState(() => getAIConfig());
+  const isConfigured = Boolean(config);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -20,6 +23,17 @@ export default function FloatingChat() {
   async function sendMessage() {
     if (!input.trim() || loading) return;
 
+    if (!config) {
+      setMessages(prev => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: error || 'הצ׳אט לא הוגדר כראוי ולכן לא ניתן לשלוח הודעה.',
+        },
+      ]);
+      return;
+    }
+
     const userMessage: Message = { role: 'user', content: input };
     setMessages([...messages, userMessage]);
     setInput('');
@@ -27,11 +41,11 @@ export default function FloatingChat() {
 
     try {
       const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-assistant`,
+        config.aiFunctionUrl,
         {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            'Authorization': `Bearer ${config.supabaseAnonKey}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
@@ -74,7 +88,7 @@ export default function FloatingChat() {
         <button
           onClick={() => setIsOpen(true)}
           className="fixed bottom-6 left-6 w-16 h-16 bg-blue-600 text-white rounded-full shadow-2xl hover:bg-blue-700 transition-all duration-300 flex items-center justify-center z-50 hover:scale-110"
-        >
+          >
           <MessageCircle className="w-8 h-8" />
         </button>
       )}
@@ -95,6 +109,12 @@ export default function FloatingChat() {
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {error && (
+              <div className="flex items-center gap-2 p-3 rounded-xl bg-yellow-50 text-yellow-900 border border-yellow-200 text-sm">
+                <AlertTriangle className="w-4 h-4" />
+                <span>{error}</span>
+              </div>
+            )}
             {messages.length === 0 && (
               <div className="text-center text-gray-500 mt-8">
                 <MessageCircle className="w-12 h-12 mx-auto mb-3 text-gray-400" />
@@ -144,12 +164,12 @@ export default function FloatingChat() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="כתוב הודעה..."
-                disabled={loading}
+                disabled={loading || !isConfigured}
                 className="flex-1 p-3 border-2 border-gray-300 rounded-xl focus:border-blue-600 focus:outline-none disabled:opacity-50"
               />
               <button
                 type="submit"
-                disabled={!input.trim() || loading}
+                disabled={!input.trim() || loading || !isConfigured}
                 className="bg-blue-600 text-white p-3 rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Send className="w-5 h-5" />
