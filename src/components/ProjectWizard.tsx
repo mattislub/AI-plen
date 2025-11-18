@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ArrowRight, ArrowLeft, Sparkles, CheckCircle, Edit3 } from 'lucide-react';
-import { supabase, Project, Page, PageSection } from '../lib/supabase';
+import { createProject, type Project, type ProjectStructure } from '../lib/supabase';
 
 interface ProjectWizardProps {
   onCancel: () => void;
@@ -35,61 +35,7 @@ export default function ProjectWizard({ onCancel, onComplete }: ProjectWizardPro
 
     setLoading(true);
     try {
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-assistant`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            messages: [
-              {
-                role: 'system',
-                content: `אתה עוזר מקצועי בבניית אתרים. המשתמש יתאר לך איזה אתר הוא רוצה לבנות, ואתה צריך להחזיר תוכן מובנה בפורמט JSON בלבד.
-
-החזר JSON בפורמט הבא:
-{
-  "title": "שם האתר",
-  "description": "תיאור קצר של האתר",
-  "theme": "נושא האתר (למשל: עסקי, אישי, בלוג, חנות)",
-  "pages": [
-    {
-      "name": "home",
-      "title": "דף הבית",
-      "sections": [
-        {
-          "type": "hero",
-          "content": {
-            "heading": "כותרת ראשית",
-            "subheading": "כותרת משנה",
-            "cta": "טקסט לכפתור"
-          }
-        }
-      ]
-    }
-  ]
-}
-
-סוגי קטעים אפשריים: hero, about, services, features, testimonials, contact, gallery, pricing, faq
-כל קטע צריך content מתאים לסוג שלו.`
-              },
-              {
-                role: 'user',
-                content: userInput
-              }
-            ]
-          })
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error('Failed to generate content');
-      }
-
-      const data = await response.json();
-      const content = JSON.parse(data.choices[0].message.content);
+      const content = await generateContentLocally(userInput);
       setGeneratedContent(content);
       setEditedContent(content);
       setStep('review');
@@ -106,53 +52,21 @@ export default function ProjectWizard({ onCancel, onComplete }: ProjectWizardPro
 
     setLoading(true);
     try {
-      const { data: project, error: projectError } = await supabase
-        .from('projects')
-        .insert([
-          {
-            title: editedContent.title,
-            description: editedContent.description,
-            theme: editedContent.theme,
-          }
-        ])
-        .select()
-        .single();
+      const projectStructure: ProjectStructure[] = editedContent.pages.map((page, index) => ({
+        name: page.name || `page-${index + 1}`,
+        title: page.title,
+        sections: page.sections.map(section => ({
+          type: section.type,
+          content: section.content,
+        })),
+      }));
 
-      if (projectError) throw projectError;
-
-      for (let i = 0; i < editedContent.pages.length; i++) {
-        const pageData = editedContent.pages[i];
-        const { data: page, error: pageError } = await supabase
-          .from('pages')
-          .insert([
-            {
-              project_id: project.id,
-              name: pageData.name,
-              title: pageData.title,
-              order: i,
-            }
-          ])
-          .select()
-          .single();
-
-        if (pageError) throw pageError;
-
-        for (let j = 0; j < pageData.sections.length; j++) {
-          const section = pageData.sections[j];
-          const { error: sectionError } = await supabase
-            .from('page_sections')
-            .insert([
-              {
-                page_id: page.id,
-                section_type: section.type,
-                content: section.content,
-                order: j,
-              }
-            ]);
-
-          if (sectionError) throw sectionError;
-        }
-      }
+      const project = await createProject({
+        title: editedContent.title,
+        description: editedContent.description,
+        theme: editedContent.theme,
+        structure: projectStructure,
+      });
 
       onComplete(project);
     } catch (error) {
@@ -161,6 +75,114 @@ export default function ProjectWizard({ onCancel, onComplete }: ProjectWizardPro
     } finally {
       setLoading(false);
     }
+  }
+
+  function summarizeTheme(input: string) {
+    if (!input.trim()) return 'מותאם אישית';
+    const keywords = input
+      .replace(/[.,!?]/g, '')
+      .split(' ')
+      .map(word => word.trim())
+      .filter(Boolean);
+    if (keywords.length === 0) return 'מותאם אישית';
+    return `${keywords.slice(0, 3).join(' ')}`;
+  }
+
+  async function generateContentLocally(description: string): Promise<GeneratedContent> {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        const cleanDescription = description.trim();
+        const title = cleanDescription
+          ? `אתר עבור ${cleanDescription.split(/[.!?]/)[0]?.slice(0, 40)}`
+          : 'אתר חדש שנוצר באשף';
+        const theme = summarizeTheme(cleanDescription);
+        const baseCTA = cleanDescription ? 'דברו איתי עכשיו' : 'למידע נוסף';
+        const heroHeading = cleanDescription || 'בואו לבנות איתנו אתר ייחודי';
+
+        const pages = [
+          {
+            name: 'home',
+            title: 'דף הבית',
+            sections: [
+              {
+                type: 'hero',
+                content: {
+                  heading: heroHeading,
+                  subheading: 'פתרונות דיגיטליים מותאמים אישית לצרכים שלכם',
+                  cta: baseCTA,
+                },
+              },
+              {
+                type: 'about',
+                content: {
+                  title: 'מי אנחנו',
+                  body: cleanDescription || 'הגיע הזמן לספר לעולם עליכם ועל מה שאתם מציעים.',
+                },
+              },
+            ],
+          },
+          {
+            name: 'services',
+            title: 'שירותים',
+            sections: [
+              {
+                type: 'services',
+                content: {
+                  title: 'מה אנחנו מציעים',
+                  items: [
+                    'פתרונות מותאמים אישית',
+                    'תכנון חווית משתמש',
+                    'תמיכה וליווי מתמשך',
+                  ],
+                },
+              },
+              {
+                type: 'features',
+                content: {
+                  title: 'למה לבחור בנו',
+                  items: [
+                    'גישה מקצועית וקשובה',
+                    'עיצוב עכשווי ונקי',
+                    'התמקדות בתוצאות עסקיות',
+                  ],
+                },
+              },
+            ],
+          },
+          {
+            name: 'contact',
+            title: 'צור קשר',
+            sections: [
+              {
+                type: 'contact',
+                content: {
+                  title: 'נשמח לשמוע מכם',
+                  description: 'צרו קשר ונבנה יחד אתר מדויק לצרכים שלכם',
+                  cta: 'שלחו הודעה',
+                },
+              },
+              {
+                type: 'faq',
+                content: {
+                  title: 'שאלות נפוצות',
+                  items: [
+                    { question: 'כמה זמן לוקח לבנות אתר?', answer: 'רוב הפרויקטים מסתיימים תוך מספר שבועות.' },
+                    { question: 'מה נדרש ממני כדי להתחיל?', answer: 'תיאור קצר של המטרה והחזון שלכם.' },
+                  ],
+                },
+              },
+            ],
+          },
+        ];
+
+        resolve({
+          title,
+          description: cleanDescription || 'אשף הפרויקטים יוצר עבורך מבנה אתר בסיסי שניתן לערוך בקלות.',
+          theme,
+          pages,
+        });
+      }, 800);
+    });
   }
 
   return (

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { ArrowRight, Trash2, Plus, Calendar } from 'lucide-react';
-import { supabase, Project } from '../lib/supabase';
+import { fetchProjects, removeProject, type Project } from '../lib/supabase';
 
 interface ProjectsListProps {
   onBackHome: () => void;
@@ -19,13 +19,8 @@ export default function ProjectsList({ onBackHome, onStartNewProject, onSelectPr
   async function loadProjects() {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('projects')
-        .select('*')
-        .order('updated_at', { ascending: false });
-
-      if (error) throw error;
-      setProjects(data || []);
+      const data = await fetchProjects();
+      setProjects(data);
     } catch (error) {
       console.error('Error loading projects:', error);
     } finally {
@@ -38,8 +33,7 @@ export default function ProjectsList({ onBackHome, onStartNewProject, onSelectPr
     if (!confirm('האם אתה בטוח שברצונך למחוק את הפרויקט?')) return;
 
     try {
-      const { error } = await supabase.from('projects').delete().eq('id', id);
-      if (error) throw error;
+      await removeProject(id);
       setProjects(projects.filter(p => p.id !== id));
     } catch (error) {
       console.error('Error deleting project:', error);
